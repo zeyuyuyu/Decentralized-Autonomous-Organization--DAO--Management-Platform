@@ -1,133 +1,56 @@
-from datetime import datetime, timedelta
-from enum import Enum
-from typing import List, Dict, Optional
-
-class ProposalStatus(Enum):
-    DRAFT = 'draft'
-    ACTIVE = 'active' 
-    PASSED = 'passed'
-    FAILED = 'failed'
-    EXECUTED = 'executed'
+import datetime
+import json
+from typing import List, Dict
 
 class Proposal:
-    def __init__(self, id: str, title: str, description: str, creator: str,
-                 voting_period_days: int = 7):
-        self.id = id
+    def __init__(self, title: str, description: str, creator: str, start_date: datetime.datetime, end_date: datetime.datetime, vote_threshold: float):
         self.title = title
         self.description = description
         self.creator = creator
-        self.status = ProposalStatus.DRAFT
-        self.created_at = datetime.now()
-        self.voting_ends_at = self.created_at + timedelta(days=voting_period_days)
-        self.votes_for = 0
-        self.votes_against = 0
-        self.voters = set()
+        self.start_date = start_date
+        self.end_date = end_date
+        self.vote_threshold = vote_threshold
+        self.votes = {}
 
-    def get_result(self) -> Optional[bool]:
-        if datetime.now() < self.voting_ends_at:
-            return None
-        return self.votes_for > self.votes_against
+    def cast_vote(self, voter: str, vote: bool):
+        self.votes[voter] = vote
 
-class GovernanceSystem:
-    def __init__(self):
-        self.proposals: Dict[str, Proposal] = {}
-        self.quorum_threshold = 100  # Minimum votes needed
-        self.execution_delay_hours = 24
+    def get_vote_count(self) -> Dict[bool, int]:
+        yes_votes = sum(1 for vote in self.votes.values() if vote)
+        no_votes = sum(1 for vote in self.votes.values() if not vote)
+        return {'yes': yes_votes, 'no': no_votes}
 
-    def create_proposal(self, id: str, title: str, description: str, 
-                       creator: str) -> Proposal:
-        if id in self.proposals:
-            raise ValueError(f'Proposal with ID {id} already exists')
-        
-        proposal = Proposal(id, title, description, creator)
-        self.proposals[id] = proposal
+    def is_passed(self) -> bool:
+        vote_count = self.get_vote_count()
+        total_votes = vote_count['yes'] + vote_count['no']
+        return vote_count['yes'] / total_votes >= self.vote_threshold
+
+class DAOGovernance:
+    def __init__(self, members: List[str], vote_threshold: float = 0.5):
+        self.members = members
+        self.vote_threshold = vote_threshold
+        self.proposals = []
+
+    def create_proposal(self, title: str, description: str, creator: str, start_date: datetime.datetime, end_date: datetime.datetime) -> Proposal:
+        proposal = Proposal(title, description, creator, start_date, end_date, self.vote_threshold)
+        self.proposals.append(proposal)
         return proposal
 
-    def activate_proposal(self, proposal_id: str) -> None:
-        proposal = self.proposals.get(proposal_id)
-        if not proposal:
-            raise ValueError(f'Proposal {proposal_id} not found')
-        
-        if proposal.status != ProposalStatus.DRAFT:
-            raise ValueError(f'Proposal {proposal_id} is not in draft status')
-            
-        proposal.status = ProposalStatus.ACTIVE
-        
-    def cast_vote(self, proposal_id: str, voter: str, vote_for: bool) -> None:
-        proposal = self.proposals.get(proposal_id)
-        if not proposal:
-            raise ValueError(f'Proposal {proposal_id} not found')
-            
-        if proposal.status != ProposalStatus.ACTIVE:
-            raise ValueError(f'Proposal {proposal_id} is not active')
-            
-        if voter in proposal.voters:
-            raise ValueError(f'Voter {voter} has already voted')
-            
-        if datetime.now() > proposal.voting_ends_at:
-            raise ValueError(f'Voting period has ended for proposal {proposal_id}')
-        
-        if vote_for:
-            proposal.votes_for += 1
-        else:
-            proposal.votes_against += 1
-        proposal.voters.add(voter)
+    def cast_vote(self, proposal_index: int, voter: str, vote: bool):
+        proposal = self.proposals[proposal_index]
+        proposal.cast_vote(voter, vote)
 
-    def process_proposal(self, proposal_id: str) -> None:
-        proposal = self.proposals.get(proposal_id)
-        if not proposal:
-            raise ValueError(f'Proposal {proposal_id} not found')
-            
-        if proposal.status != ProposalStatus.ACTIVE:
-            raise ValueError(f'Proposal {proposal_id} is not active')
-            
-        if datetime.now() < proposal.voting_ends_at:
-            raise ValueError(f'Voting period has not ended')
-            
-        total_votes = proposal.votes_for + proposal.votes_against
-        if total_votes < self.quorum_threshold:
-            proposal.status = ProposalStatus.FAILED
-            return
-            
-        result = proposal.get_result()
-        if result:
-            proposal.status = ProposalStatus.PASSED
-        else:
-            proposal.status = ProposalStatus.FAILED
-
-    def execute_proposal(self, proposal_id: str) -> None:
-        proposal = self.proposals.get(proposal_id)
-        if not proposal:
-            raise ValueError(f'Proposal {proposal_id} not found')
-            
-        if proposal.status != ProposalStatus.PASSED:
-            raise ValueError(f'Proposal {proposal_id} has not passed')
-            
-        execution_time = proposal.voting_ends_at + timedelta(hours=self.execution_delay_hours)
-        if datetime.now() < execution_time:
-            raise ValueError(f'Execution delay has not passed')
-            
-        # Execute proposal logic here
-        proposal.status = ProposalStatus.EXECUTED
-
-    def get_active_proposals(self) -> List[Proposal]:
-        return [p for p in self.proposals.values() 
-                if p.status == ProposalStatus.ACTIVE]
-
-    def get_proposal_history(self, proposal_id: str) -> Dict:
-        proposal = self.proposals.get(proposal_id)
-        if not proposal:
-            raise ValueError(f'Proposal {proposal_id} not found')
-            
+    def get_proposal_status(self, proposal_index: int) -> Dict[str, any]:
+        proposal = self.proposals[proposal_index]
+        vote_count = proposal.get_vote_count()
         return {
-            'id': proposal.id,
             'title': proposal.title,
             'description': proposal.description,
             'creator': proposal.creator,
-            'status': proposal.status.value,
-            'created_at': proposal.created_at,
-            'voting_ends_at': proposal.voting_ends_at,
-            'votes_for': proposal.votes_for,
-            'votes_against': proposal.votes_against,
-            'total_voters': len(proposal.voters)
+            'start_date': proposal.start_date.isoformat(),
+            'end_date': proposal.end_date.isoformat(),
+            'vote_threshold': proposal.vote_threshold,
+            'yes_votes': vote_count['yes'],
+            'no_votes': vote_count['no'],
+            'passed': proposal.is_passed()
         }
