@@ -1,66 +1,49 @@
-import datetime
-import hashlib
 import json
+import time
+from typing import List, Dict
 
-class Proposal:
-    def __init__(self, title, description, creator, start_date, end_date):
-        self.title = title
-        self.description = description
-        self.creator = creator
-        self.start_date = start_date
-        self.end_date = end_date
-        self.votes = {}
-        self.id = hashlib.sha256((title + description + creator + str(start_date) + str(end_date)).encode()).hexdigest()
-
-    def add_vote(self, voter, vote):
-        self.votes[voter] = vote
-
-    def get_vote_count(self, vote_type):
-        count = 0
-        for vote in self.votes.values():
-            if vote == vote_type:
-                count += 1
-        return count
-
-    def is_active(self):
-        now = datetime.datetime.now()
-        return self.start_date <= now <= self.end_date
-
-class DAO:
-    def __init__(self, name, members):
-        self.name = name
-        self.members = members
+class DAOGovernance:
+    def __init__(self, dao_config: Dict):
+        self.dao_config = dao_config
         self.proposals = []
+        self.votes = {}
+        self.execution_queue = []
 
-    def add_proposal(self, proposal):
+    def submit_proposal(self, proposer: str, description: str, action: Dict) -> int:
+        proposal = {
+            'id': len(self.proposals),
+            'proposer': proposer,
+            'description': description,
+            'action': action,
+            'start_time': time.time(),
+            'end_time': time.time() + self.dao_config['proposal_duration'],
+            'votes_for': 0,
+            'votes_against': 0
+        }
         self.proposals.append(proposal)
+        return proposal['id']
 
-    def vote_on_proposal(self, proposal_id, voter, vote):
-        for proposal in self.proposals:
-            if proposal.id == proposal_id:
-                proposal.add_vote(voter, vote)
-                break
+    def cast_vote(self, voter: str, proposal_id: int, vote: bool) -> None:
+        if proposal_id not in self.votes:
+            self.votes[proposal_id] = {}
+        self.votes[proposal_id][voter] = vote
+        proposal = self.proposals[proposal_id]
+        if vote:
+            proposal['votes_for'] += 1
+        else:
+            proposal['votes_against'] += 1
 
-    def get_proposal_result(self, proposal_id):
-        for proposal in self.proposals:
-            if proposal.id == proposal_id:
-                yes_votes = proposal.get_vote_count('yes')
-                no_votes = proposal.get_vote_count('no')
-                if yes_votes > no_votes:
-                    return 'Passed'
-                else:
-                    return 'Failed'
-        return 'Proposal not found'
+    def execute_proposal(self, proposal_id: int) -> None:
+        proposal = self.proposals[proposal_id]
+        if time.time() > proposal['end_time']:
+            if proposal['votes_for'] > proposal['votes_against']:
+                self.execution_queue.append(proposal['action'])
+            self.proposals.remove(proposal)
 
-    def execute_proposal(self, proposal_id):
-        for proposal in self.proposals:
-            if proposal.id == proposal_id:
-                if proposal.is_active():
-                    if self.get_proposal_result(proposal_id) == 'Passed':
-                        # Execute the proposal's logic here
-                        print(f'Executing proposal: {proposal.title}')
-                    else:
-                        print(f'Proposal {proposal.title} failed to pass')
-                else:
-                    print(f'Proposal {proposal.title} is not active')
-                break
+    def run_governance_cycle(self) -> None:
+        for proposal_id in range(len(self.proposals)):
+            self.execute_proposal(proposal_id)
+        for action in self.execution_queue:
+            # Execute the actions in the queue
+            pass
+        self.execution_queue = []
